@@ -1,12 +1,8 @@
 import torch
 import torch.nn as nn
-import numpy as np
-import torch.nn.functional as F
-
-import torch
 import math
 import numpy as np
-import torch.nn as nn
+import torch.nn.functional as F
 
 class LearnableGaussianPrior2D(nn.Module):
     def __init__(self, num_points: int):
@@ -277,7 +273,7 @@ class ConditionalUNet(nn.Module):
         
         return torch.cat([pos_enc_a, pos_enc_b], dim =-1)
 
-    def forward(self, noisy_traj, t, promt):
+    def forward(self, noisy_traj, t, prompt):
 
         # Denoising timestep
         t = t.unsqueeze(-1).type(torch.float) 
