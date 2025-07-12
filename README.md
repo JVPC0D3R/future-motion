@@ -37,6 +37,7 @@ pip install -e hptr
 ```
 
 Prepare Waymo Open Motion and Argoverse 2 Forecasting datasets by following the instructions in the [HPTR repository](https://github.com/zhejz/HPTR).
+For using nuScenes, prepare the dataset by following the steps detailed in the [unitraj2hptr repository](https://github.com/marlon31415/unitraj2hptr).
 
 ## Our methods
 
