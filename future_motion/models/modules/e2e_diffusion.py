@@ -231,7 +231,6 @@ class ConditionalUNet(nn.Module):
             device: torch.device = "cuda"
             ):
         
-
         super(ConditionalUNet, self).__init__()
         
         self.device = device
@@ -307,3 +306,43 @@ class ConditionalUNet(nn.Module):
         traj = self.out_layer(x5)
 
         return traj
+    
+
+class Diffusion:
+    def __init__(
+            self,
+            noise_steps: int,
+            beta_start: float,
+            beta_end: float,
+            ):
+        
+        self.noise_steps = noise_steps
+        self.beta_start = beta_start
+        self.beta_end = beta_end
+
+        self.beta = self.prepare_noise_schedule()
+        self.alpha = 1.0 - self.beta
+        self.alpha_hat = torch.cumprod(self.alpha, dim = 0)
+
+    def prepare_noise_schedule(self):
+        return torch.linspace(
+            self.beta_start, 
+            self.beta_end, 
+            self.noise_steps
+            )
+    
+    def sample_timesteps(self, batch_size):
+        return torch.randint(
+            low=1, 
+            high=self.noise_steps, 
+            size=(batch_size,)
+            )
+
+    def noise_trajectory(self, noise, traj, t):
+
+        sqrt_alpha_hat = torch.sqrt(self.alpha_hat[t])[:, None, None, None]
+        sqrt_one_minus_alpha_hat = torch.sqrt(1 - self.alpha_hat[t])[:, None, None, None]
+
+        # Noise must be sampled from the model's gaussian prior
+
+        return sqrt_alpha_hat * traj + sqrt_one_minus_alpha_hat * noise, noise
