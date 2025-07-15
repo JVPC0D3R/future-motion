@@ -314,13 +314,14 @@ class Diffusion:
             noise_steps: int,
             beta_start: float,
             beta_end: float,
+            device
             ):
         
         self.noise_steps = noise_steps
         self.beta_start = beta_start
         self.beta_end = beta_end
 
-        self.beta = self.prepare_noise_schedule()
+        self.beta = self.prepare_noise_schedule().to(device)
         self.alpha = 1.0 - self.beta
         self.alpha_hat = torch.cumprod(self.alpha, dim = 0)
 
