@@ -5,19 +5,21 @@ import numpy as np
 import torch.nn.functional as F
 
 class LearnableGaussianPrior2D(nn.Module):
-    def __init__(self, num_points: int):
+    def __init__(self, num_points: int, batch_size: int):
         super().__init__()
         self.num_points = num_points
         
-        self.mu_x = nn.Parameter(torch.zeros(num_points))
-        self.logvar_x = nn.Parameter(torch.zeros(num_points))
-        
-        self.mu_y = nn.Parameter(torch.zeros(num_points))
-        self.logvar_y = nn.Parameter(torch.zeros(num_points))
+        # x ~ N(0,1) 
+        self.mean_x = nn.Parameter(torch.zeros(batch_size, num_points))
+        self.logvar_x = nn.Parameter(torch.zeros(batch_size, num_points))
 
-    def sample(self, batch_size: int, device: torch.device) -> torch.Tensor:
+        # y ~ N(0,1)
+        self.mean_y = nn.Parameter(torch.zeros(batch_size, num_points))
+        self.logvar_y = nn.Parameter(torch.zeros(batch_size, num_points))
+
+    def sample(self) -> torch.Tensor:
         """
-        Used in generation mode
+        Gets num_points random samples for x and y from the learned distributions
 
         Args:
             batch_size: int
@@ -26,51 +28,18 @@ class LearnableGaussianPrior2D(nn.Module):
         Returns:
             sample: [batch_size, 20, 1, 2]
         """
+
+        x = torch.normal(
+            mean = self.mean_x,
+            std = torch.exp(0.5 * self.logvar_x)
+            )
         
-        eps_x = torch.randn(batch_size, self.num_points, device=device)
-        eps_y = torch.randn(batch_size, self.num_points, device=device)
-        
-        x = self.mu_x.unsqueeze(0) + torch.exp(0.5 * self.logvar_x).unsqueeze(0) * eps_x
-        y = self.mu_y.unsqueeze(0) + torch.exp(0.5 * self.logvar_y).unsqueeze(0) * eps_y
+        y = torch.normal(
+            mean = self.mean_y,
+            std = torch.exp(0.5 * self.logvar_y)
+            )
         
         return torch.stack([x, y], dim=-1).unsqueeze(2)
-
-    def log_prob(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Calculates log likelihood of x, and sums it for all points
-
-        Args:
-            x: [batch_size, 20, 1, 2]
-
-        Returns:
-            log_prob: [batch_size, ]
-        """
-        B, N, _, D = x.shape
-        assert N == self.num_points and D == 2
-
-        x_coords = x[..., 0]
-        y_coords = x[..., 1]
-
-        
-        var_x = torch.exp(self.logvar_x).unsqueeze(0).unsqueeze(2)
-        var_y = torch.exp(self.logvar_y).unsqueeze(0).unsqueeze(2)
-
-        
-        logp_x = -0.5 * (
-            ((x_coords - self.mu_x.unsqueeze(0).unsqueeze(2)) ** 2) / var_x
-            + self.logvar_x.unsqueeze(0).unsqueeze(2)
-            + math.log(2 * math.pi)
-        )  
-
-        logp_y = -0.5 * (
-            ((y_coords - self.mu_y.unsqueeze(0).unsqueeze(2)) ** 2) / var_y
-            + self.logvar_y.unsqueeze(0).unsqueeze(2)
-            + math.log(2 * math.pi)
-        ) 
-
-        logp = (logp_x + logp_y).sum(dim=1)
-
-        return logp
 
 class SelfAttention(nn.Module):
     def __init__(
