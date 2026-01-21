@@ -53,7 +53,7 @@ class WayformerFact(nn.Module):
         )
 
         self.encoder = FactorizedEarlyFusionEncoder(
-            hidden_dim=decoder_hidden_dim,
+            decoder_hidden_dim=decoder_hidden_dim,
             encoder_hidden_dim = encoder_hidden_dim,
             tf_cfg=tf_cfg,
             **early_fusion_encoder
@@ -303,7 +303,7 @@ class InputProjections(nn.Module):
 class FactorizedEarlyFusionEncoder(nn.Module):
     def __init__(
         self,
-        hidden_dim: int,
+        decoder_hidden_dim: int,
         encoder_hidden_dim: int,
         tf_cfg: DictConfig,
         latent_query: DictConfig,
@@ -313,7 +313,7 @@ class FactorizedEarlyFusionEncoder(nn.Module):
         n_ff_mult: int,
     ) -> None:
         super().__init__()
-        self.hidden_dim = hidden_dim
+        self.decoder_hidden_dim = decoder_hidden_dim
         self.encoder_hidden_dim = encoder_hidden_dim
         self.n_encoder_layers = n_encoder_layers
         self.n_temp_latent_query = n_temp_latent_query
@@ -350,8 +350,8 @@ class FactorizedEarlyFusionEncoder(nn.Module):
                     d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * 6, n_layer=n_encoder_layers, **tf_cfg
                 )
 
-        if self.hidden_dim != self.encoder_hidden_dim:
-            self.out_proj = nn.Linear(encoder_hidden_dim, hidden_dim)
+        if self.decoder_hidden_dim != self.encoder_hidden_dim:
+            self.out_proj = nn.Linear(encoder_hidden_dim, decoder_hidden_dim)
 
     def forward(
         self,
@@ -452,7 +452,7 @@ class FactorizedEarlyFusionEncoder(nn.Module):
             else:
                 emb, _ = self.tf_self_attn(src=emb, tgt=emb, tgt_padding_mask=emb_invalid)
 
-            if self.hidden_dim != self.encoder_hidden_dim:
+            if self.decoder_hidden_dim != self.encoder_hidden_dim:
                 emb = self.out_proj(emb)
 
         return emb, emb_invalid
