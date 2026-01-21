@@ -320,35 +320,26 @@ class FactorizedEarlyFusionEncoder(nn.Module):
         self.n_spat_latent_query = n_spat_latent_query
         self.n_ff_mult = n_ff_mult
 
-        if self.n_encoder_layers > 0:
-            if self.n_temp_latent_query > 0 and self.n_spat_latent_query > 0:
+        self.temp_latent_query = MultiModalAnchors(
+            hidden_dim=encoder_hidden_dim, emb_dim=encoder_hidden_dim, n_pred=self.n_temp_latent_query, **latent_query
+        )
+        self.spat_latent_query = MultiModalAnchors(
+            hidden_dim=encoder_hidden_dim, emb_dim=encoder_hidden_dim, n_pred=self.n_spat_latent_query, **latent_query
+        )
+        
+        self.tf_temp_latent_cross = TransformerBlock(
+                d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * self.n_ff_mult, n_layer=1, **tf_cfg
+        )
+        self.tf_temp_latent_self = TransformerBlock(
+                d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * self.n_ff_mult, n_layer=int(n_encoder_layers/2), **tf_cfg
+        )
 
-                self.temp_latent_query = MultiModalAnchors(
-                    hidden_dim=encoder_hidden_dim, emb_dim=encoder_hidden_dim, n_pred=self.n_temp_latent_query, **latent_query
-                )
-                self.spat_latent_query = MultiModalAnchors(
-                    hidden_dim=encoder_hidden_dim, emb_dim=encoder_hidden_dim, n_pred=self.n_spat_latent_query, **latent_query
-                )
-
-                
-                self.tf_temp_latent_cross = TransformerBlock(
-                        d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * self.n_ff_mult, n_layer=1, **tf_cfg
-                )
-                self.tf_temp_latent_self = TransformerBlock(
-                        d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * self.n_ff_mult, n_layer=int(n_encoder_layers/2), **tf_cfg
-                )
-
-                self.tf_spat_latent_cross = TransformerBlock(
-                        d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * self.n_ff_mult, n_layer=1, **tf_cfg
-                )
-                self.tf_spat_latent_self = TransformerBlock(
-                        d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * self.n_ff_mult, n_layer=int(n_encoder_layers/2), **tf_cfg
-                )
-
-            else:
-                self.tf_self_attn = TransformerBlock(
-                    d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * 6, n_layer=n_encoder_layers, **tf_cfg
-                )
+        self.tf_spat_latent_cross = TransformerBlock(
+                d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * self.n_ff_mult, n_layer=1, **tf_cfg
+        )
+        self.tf_spat_latent_self = TransformerBlock(
+                d_model=encoder_hidden_dim, d_feedforward=encoder_hidden_dim * self.n_ff_mult, n_layer=int(n_encoder_layers/2), **tf_cfg
+        )
 
         if self.decoder_hidden_dim != self.encoder_hidden_dim:
             self.out_proj = nn.Linear(encoder_hidden_dim, decoder_hidden_dim)
@@ -392,68 +383,63 @@ class FactorizedEarlyFusionEncoder(nn.Module):
         tl_any     = tl_valid.any(1).flatten(0, 1)
         temp_any = torch.cat([target_any, other_any, tl_any], dim=0)
         
-        if self.n_encoder_layers > 0:
-            if self.n_temp_latent_query > 0 and self.n_spat_latent_query > 0:
+        # [(n_scene * n_agent) + (n_scene * n_agent * other_agent) + (n_scene * n_agent * n_tl), n_latent_query, out_dim]
+        temp_lq_emb = self.temp_latent_query(
+            temp_any,
+            None,
+            target_type.flatten(0, 1)
+            )
 
-                # [(n_scene * n_agent) + (n_scene * n_agent * other_agent) + (n_scene * n_agent * n_tl), n_latent_query, out_dim]
-                temp_lq_emb = self.temp_latent_query(
-                    temp_any,
-                    None,
-                    target_type.flatten(0, 1)
-                    )
+        temp_emb, _ = self.tf_temp_latent_cross(src=temp_lq_emb, tgt=temp_emb, tgt_padding_mask=temp_emb_invalid)
+        temp_emb, _ = self.tf_temp_latent_self(src=temp_emb, tgt=temp_emb)
 
-                temp_emb, _ = self.tf_temp_latent_cross(src=temp_lq_emb, tgt=temp_emb, tgt_padding_mask=temp_emb_invalid)
-                temp_emb, _ = self.tf_temp_latent_self(src=temp_emb, tgt=temp_emb)
+        target_temp, other_temp, tl_temp = torch.split(temp_emb, [n_batch, n_batch*n_other, n_batch*n_tl], dim=0)
 
-                target_temp, other_temp, tl_temp = torch.split(temp_emb, [n_batch, n_batch*n_other, n_batch*n_tl], dim=0)
+        # [n_batch, n_temp_lq, hidden_dim] -> [n_batch, n_temp_lq, 1, hidden_dim]
+        target_temp = target_temp.reshape(n_batch, self.n_temp_latent_query, 1, target_emb.shape[-1])
+        target_temp_valid = torch.ones((n_batch, self.n_temp_latent_query, 1), dtype=torch.bool, device=target_temp.device)
+        target_temp_valid = target_temp_valid & target_valid.any(1)[:, None, None]
+        # [n_batch*n_other, n_temp_lq, hidden_dim] ->[n_batch, n_temp_lq, n_other, hidden_dim]
+        other_temp = other_temp.reshape(n_batch, n_other, self.n_temp_latent_query, target_emb.shape[-1]).permute(0,2,1,3)
+        other_temp_valid = torch.ones((n_batch, self.n_temp_latent_query, n_other), dtype=torch.bool, device=other_temp.device)
+        other_temp_valid = other_temp_valid & other_valid.any(2)[:, None, :]
+        # [n_batch* n_tl, n_temp_lq, hidden_dim] -> [n_batch, n_temp_lq, n_tl, hidden_dim]
+        tl_temp = tl_temp.reshape(n_batch, n_tl, self.n_temp_latent_query, target_emb.shape[-1]).permute(0,2,1,3)
+        tl_temp_valid = torch.ones((n_batch, self.n_temp_latent_query, n_tl), dtype=torch.bool, device=tl_temp.device)
+        tl_temp_valid = tl_temp_valid & tl_valid.any(1)[:, None, :]
+        # [n_batch, n_map, n_pl_node, hidden_dim] -> [n_batch, 1, n_map * n_pl_node, hidden_dim]
+        map_emb = map_emb.flatten(1,2).reshape(n_batch, 1, -1, target_emb.shape[-1])
+        map_valid = map_valid.flatten(1,2).reshape(n_batch, 1, -1)
+        # [n_batch, 1, n_map * n_pl_node, hidden_dim] -> [n_batch, n_temp_lq, n_map * n_pl_node, hidden_dim]
+        map_emb = map_emb.expand(n_batch, self.n_temp_latent_query, map_emb.shape[2], map_emb.shape[-1]) 
+        map_valid = map_valid.expand(n_batch, self.n_temp_latent_query, map_emb.shape[2])
 
-                # [n_batch, n_temp_lq, hidden_dim] -> [n_batch, n_temp_lq, 1, hidden_dim]
-                target_temp = target_temp.reshape(n_batch, self.n_temp_latent_query, 1, target_emb.shape[-1])
-                target_temp_valid = torch.ones((n_batch, self.n_temp_latent_query, 1), dtype=torch.bool, device=target_temp.device)
-                target_temp_valid = target_temp_valid & target_valid.any(1)[:, None, None]
-                # [n_batch*n_other, n_temp_lq, hidden_dim] ->[n_batch, n_temp_lq, n_other, hidden_dim]
-                other_temp = other_temp.reshape(n_batch, n_other, self.n_temp_latent_query, target_emb.shape[-1]).permute(0,2,1,3)
-                other_temp_valid = torch.ones((n_batch, self.n_temp_latent_query, n_other), dtype=torch.bool, device=other_temp.device)
-                other_temp_valid = other_temp_valid & other_valid.any(2)[:, None, :]
-                # [n_batch* n_tl, n_temp_lq, hidden_dim] -> [n_batch, n_temp_lq, n_tl, hidden_dim]
-                tl_temp = tl_temp.reshape(n_batch, n_tl, self.n_temp_latent_query, target_emb.shape[-1]).permute(0,2,1,3)
-                tl_temp_valid = torch.ones((n_batch, self.n_temp_latent_query, n_tl), dtype=torch.bool, device=tl_temp.device)
-                tl_temp_valid = tl_temp_valid & tl_valid.any(1)[:, None, :]
-                # [n_batch, n_map, n_pl_node, hidden_dim] -> [n_batch, 1, n_map * n_pl_node, hidden_dim]
-                map_emb = map_emb.flatten(1,2).reshape(n_batch, 1, -1, target_emb.shape[-1])
-                map_valid = map_valid.flatten(1,2).reshape(n_batch, 1, -1)
-                # [n_batch, 1, n_map * n_pl_node, hidden_dim] -> [n_batch, n_temp_lq, n_map * n_pl_node, hidden_dim]
-                map_emb = map_emb.expand(n_batch, self.n_temp_latent_query, map_emb.shape[2], map_emb.shape[-1]) 
-                map_valid = map_valid.expand(n_batch, self.n_temp_latent_query, map_emb.shape[2])
+        spat_emb = torch.cat([target_temp.flatten(0,1), other_temp.flatten(0,1), tl_temp.flatten(0,1), map_emb.flatten(0,1)], dim=1)
+        spat_emb_invalid = ~torch.cat([
+            target_temp_valid.flatten(0,1),
+            other_temp_valid.flatten(0,1),
+            tl_temp_valid.flatten(0,1),
+            map_valid.flatten(0,1)], dim=1
+            )
 
-                spat_emb = torch.cat([target_temp.flatten(0,1), other_temp.flatten(0,1), tl_temp.flatten(0,1), map_emb.flatten(0,1)], dim=1)
-                spat_emb_invalid = ~torch.cat([
-                    target_temp_valid.flatten(0,1),
-                    other_temp_valid.flatten(0,1),
-                    tl_temp_valid.flatten(0,1),
-                    map_valid.flatten(0,1)], dim=1
-                    )
+        spat_lq_emb = self.spat_latent_query(valid.flatten(0, 1), None, target_type.flatten(0, 1))
+        spat_lq_emb = self.spat_latent_query(
+            valid.flatten(0, 1).reshape(n_batch, 1).expand(n_batch, self.n_temp_latent_query).reshape(n_batch * self.n_temp_latent_query),
+            None,
+            target_type.flatten(0, 1)
+            )
 
-                spat_lq_emb = self.spat_latent_query(valid.flatten(0, 1), None, target_type.flatten(0, 1))
-                spat_lq_emb = self.spat_latent_query(
-                    valid.flatten(0, 1).reshape(n_batch, 1).expand(n_batch, self.n_temp_latent_query).reshape(n_batch * self.n_temp_latent_query),
-                    None,
-                    target_type.flatten(0, 1)
-                    )
+        spat_emb, _ = self.tf_spat_latent_cross(src=spat_lq_emb, tgt=spat_emb, tgt_padding_mask=spat_emb_invalid)
+        spat_emb, _ = self.tf_spat_latent_self(
+            src=spat_emb, 
+            tgt=spat_emb,
+        )
 
-                spat_emb, _ = self.tf_spat_latent_cross(src=spat_lq_emb, tgt=spat_emb, tgt_padding_mask=spat_emb_invalid)
-                spat_emb, _ = self.tf_spat_latent_self(
-                    src=spat_emb, 
-                    tgt=spat_emb,
-                )
+        emb = spat_emb.reshape(n_batch, self.n_temp_latent_query, self.n_spat_latent_query, map_emb.shape[-1]).mean(1)
+        emb_invalid = (~valid).flatten(0, 1).unsqueeze(-1).expand(-1, spat_lq_emb.shape[1])
 
-                emb = spat_emb.reshape(n_batch, self.n_temp_latent_query, self.n_spat_latent_query, map_emb.shape[-1]).mean(1)
-                emb_invalid = (~valid).flatten(0, 1).unsqueeze(-1).expand(-1, spat_lq_emb.shape[1])
-            else:
-                emb, _ = self.tf_self_attn(src=emb, tgt=emb, tgt_padding_mask=emb_invalid)
-
-            if self.decoder_hidden_dim != self.encoder_hidden_dim:
-                emb = self.out_proj(emb)
+        if self.decoder_hidden_dim != self.encoder_hidden_dim:
+            emb = self.out_proj(emb)
 
         return emb, emb_invalid
     
