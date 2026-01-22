@@ -222,6 +222,49 @@ We use the polyline representation of MPA ([Konev, 2022](https://arxiv.org/abs/2
 Adapt the paths and accounts in `sbatch/train_wayformer_juwels.sh` to your setup to train a Wayformer model on a Juwels-like cluster with a Slurm system and at least 2 nodes with 4 A100 GPUs each.
 The training is configured for the Waymo Open Motion dataset and takes roughly 24h.
 
+<big><b>Reference</b></big>
+```bibtex
+@inproceedings{nayakanti2023wayformer,
+  title={Wayformer: Motion forecasting via simple \& efficient attention networks},
+  author={Nayakanti, Nigamaa and Al-Rfou, Rami and Zhou, Aurick and Goel, Kratarth and Refaat, Khaled S and Sapp, Benjamin},
+  booktitle={International Conference on Robotics and Automation (ICRA)},
+  year={2023},
+}
+```
+
+</details>
+
+We also provide an open-source Wayformer variant that uses early fusion with sequential, factorized latent query attention. This implementation is refactored from the multi-axis latent query attention re-implementation (`ac_wayformer.py`)
+
+The hyperparameters defined in `configs/model/ac_wayformer_fact.yaml` follow the WOMD SOTA config in Table 4 (see [Appendix D in the Wayformer paper](https://arxiv.org/abs/2207.05844)), with the exception that we use 1 decoder instead of 3.
+
+<details>
+<summary><big><b>More details</b></big></summary>
+
+We use the polyline representation of MPA ([Konev, 2022](https://arxiv.org/abs/2206.10041)) as input and the non-maximum supression (NMS) algorithm of MTR ([Shi et. al., 2023](https://arxiv.org/abs/2209.13508)) to select 6 trajetories from the predicted 64 trajectories.
+
+This implementation also allows reconfiguration into Argoverse SOTA config in Table 5 (see [Appendix D in the Wayformer paper](https://arxiv.org/abs/2207.05844)) by modifying the following fields in `configs/model/ac_wayformer_fact.yaml`:
+
+```yaml
+model:
+  _target_: future_motion.models.ac_wayformer_fact.WayformerFact
+  ...
+  decoder_hidden_dim: 128
+  ...
+  pred_subsampling_rate: 1 # We resample at 10Hz.
+  ...
+  early_fusion_encoder:
+    n_temp_latent_query: 6
+    ...
+    n_ff_mult: 6
+  ...
+  decoder:
+    _target_: future_motion.models.ac_wayformer_fact.Decoder
+    n_decoder_layers: 6
+    n_ff_mult: 6
+    n_pred: 6
+  ...
+```
 
 <big><b>Reference</b></big>
 ```bibtex
