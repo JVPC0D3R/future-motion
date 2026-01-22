@@ -191,8 +191,8 @@ class InputProjections(nn.Module):
         if self.add_learned_pe:
             if self.pl_aggr or self.use_point_net:
                 self.pe_target = nn.Parameter(torch.zeros([1, hidden_dim]), requires_grad=True)
-                self.pe_other = nn.Parameter(torch.zeros([1, 1, hidden_dim]), requires_grad=True)
-                self.pe_map = nn.Parameter(torch.zeros([1, 1, hidden_dim]), requires_grad=True)
+                self.pe_other = nn.Parameter(torch.zeros([1, 1, 1, hidden_dim]), requires_grad=True)
+                self.pe_map = nn.Parameter(torch.zeros([1, 1, 1, hidden_dim]), requires_grad=True)
             else:
                 self.pe_target = nn.Parameter(torch.zeros([1, n_step_hist, hidden_dim]), requires_grad=True)
                 self.pe_other = nn.Parameter(torch.zeros([1, 1, n_step_hist, hidden_dim]), requires_grad=True)
@@ -257,8 +257,12 @@ class InputProjections(nn.Module):
         if self.use_point_net:
             # [n_batch, n_map, map_attr_dim], [n_batch, n_map]
             map_emb, map_valid = self.point_net_map(map_attr.flatten(0, 1), map_valid.flatten(0, 1))
+            map_emb = map_emb.unsqueeze(2)
+            map_valid = map_valid.unsqueeze(2)
             # [n_batch, n_other, agent_attr_dim], [n_batch, n_other]
             other_emb, other_valid = self.point_net_other(other_attr.flatten(0, 1), other_valid.flatten(0, 1))
+            other_emb = other_emb.unsqueeze(2)
+            other_valid = other_valid.unsqueeze(2)
             # [n_scene, n_target, agent_attr_dim]
             target_emb, target_valid = self.point_net_target(target_attr, target_valid)
             target_emb = target_emb.flatten(0, 1)  # [n_batch, agent_attr_dim]
@@ -287,10 +291,10 @@ class InputProjections(nn.Module):
             target_valid = target_valid.unsqueeze(1)  # [n_batch, 1]
         else:
             # target_emb: [n_batch, n_step_hist/1, :], target_valid: [n_batch, n_step_hist/1]
-            map_emb = map_emb #.flatten(1, 2)  # [n_batch, n_map * n_pl_node, :]
-            map_valid = map_valid #.flatten(1, 2)  # [n_batch, n_map * n_pl_node]
-            #other_emb = other_emb.flatten(1, 2)  # [n_batch, n_other * n_step_hist, :]
-            #other_valid = other_valid.flatten(1, 2)  # [n_batch, n_other * n_step_hist]
+            map_emb = map_emb # [n_batch, n_map, n_pl_node, :]
+            map_valid = map_valid # [n_batch, n_map, n_pl_node]
+            #other_emb: [n_batch, n_other, n_step_hist, :]
+            #other_valid: [n_batch, n_other, n_step_hist]
 
         return (
             target_emb, target_valid,
@@ -422,7 +426,6 @@ class FactorizedEarlyFusionEncoder(nn.Module):
             map_valid.flatten(0,1)], dim=1
             )
 
-        spat_lq_emb = self.spat_latent_query(valid.flatten(0, 1), None, target_type.flatten(0, 1))
         spat_lq_emb = self.spat_latent_query(
             valid.flatten(0, 1).reshape(n_batch, 1).expand(n_batch, self.n_temp_latent_query).reshape(n_batch * self.n_temp_latent_query),
             None,
