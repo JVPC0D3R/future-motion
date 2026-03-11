@@ -99,42 +99,6 @@ def plot_motion_forecasts(
                     zorder=1,
                 )
 
-    # Plot traffic lights:
-    if plot_tl:
-        tl_pos, tl_state, tl_valid = (
-            batch["tl_stop/pos"][idx_batch],
-            batch["tl_stop/state"][idx_batch],
-            batch["tl_stop/valid"][idx_batch],
-        )
-
-        for tl in range(tl_pos.shape[1]):
-            if tl_valid[idx_t_now, tl]:
-
-                tl_x = float(tl_pos[idx_t_now, tl, 0])
-                tl_y = float(tl_pos[idx_t_now, tl, 1])
-                tl_z = 5.0
-
-                tl_radius = 0.5
-
-                if tl_state[idx_t_now, tl, 1]:
-                    color = "red"
-                elif tl_state[idx_t_now, tl, 2]:
-                    color = "yellow"
-                elif tl_state[idx_t_now, tl, 3]:
-                    color = "green"
-                else:
-                    continue
-
-                # draw tl as a colored sphere
-                add_sphere(
-                    center=(tl_x, tl_y, tl_z),
-                    radius=tl_radius,
-                    ax=ax,
-                    color=color,
-                    edgecolor=color,
-                    alpha=0.75
-                )
-
     # Plot agents:
     for idx, (agent_pos, agent_type, agent_yaw, agent_role, agent_spd) in enumerate(
         zip(
@@ -178,6 +142,42 @@ def plot_motion_forecasts(
                 add_cube(bbox, ax, color="tab:blue", alpha=0.5)
             else:
                 add_cube(bbox, ax, color="tab:grey", alpha=0.5)
+
+    # Plot traffic lights:
+    if plot_tl:
+        tl_pos, tl_state, tl_valid = (
+            batch["tl_stop/pos"][idx_batch],
+            batch["tl_stop/state"][idx_batch],
+            batch["tl_stop/valid"][idx_batch],
+        )
+
+        for tl in range(tl_pos.shape[1]):
+            if tl_valid[idx_t_now, tl]:
+
+                tl_x = float(tl_pos[idx_t_now, tl, 0])
+                tl_y = float(tl_pos[idx_t_now, tl, 1])
+                tl_z = 5.0
+
+                tl_radius = 1.0
+
+                if tl_state[idx_t_now, tl, 1]:
+                    color = "red"
+                elif tl_state[idx_t_now, tl, 2]:
+                    color = "yellow"
+                elif tl_state[idx_t_now, tl, 3]:
+                    color = "green"
+                else:
+                    continue
+
+                # draw tl as a colored sphere
+                add_sphere(
+                    center=(tl_x, tl_y, tl_z),
+                    radius=tl_radius,
+                    ax=ax,
+                    color=color,
+                    edgecolor=color,
+                    alpha=0.75
+                )
 
     ax.set_zlim(bottom=0, top=5)
     ax.set_aspect("equal")
